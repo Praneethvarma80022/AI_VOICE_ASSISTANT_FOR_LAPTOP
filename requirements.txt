@@ -1,0 +1,23 @@
+# MSI AI Voice Assistant - Required Packages
+
+# UI Framework
+customtkinter==5.2.1
+
+# Core voice functionality
+pyttsx3==2.90
+SpeechRecognition==3.10.0
+PyAudio==0.2.13
+
+# System control and monitoring
+psutil==5.9.8
+pycaw==20240210
+comtypes==1.4.1
+screen-brightness-control==0.22.3
+
+# Additional utilities
+pyautogui==0.9.54
+winshell==0.6
+Pillow==10.2.0
+
+# Optional but recommended
+pywin32==306
