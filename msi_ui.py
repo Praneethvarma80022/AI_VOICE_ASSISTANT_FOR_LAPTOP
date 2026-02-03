@@ -20,10 +20,80 @@ import speech_recognition as sr
 import requests
 import winreg
 import ctypes
+import json
+
+# Import login system
+from login import LoginApp, DatabaseManager
 
 # --- CONFIGURATION ---
 WEATHER_API_KEY = "f1b3b5e16ef92c419c6dffec5c7de505"  # Replace with your key from openweathermap.org
-CITY = "London"
+CITY = "Vijayawada"
+
+# --- CHAT HISTORY CONFIGURATION ---
+HISTORY_DIR = Path.home() / ".msi_history"
+HISTORY_DIR.mkdir(exist_ok=True)
+CURRENT_SESSION_FILE = HISTORY_DIR / f"session_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
+
+# ==================== CHAT HISTORY MANAGER ====================
+class ChatHistoryManager:
+    """Manages chat history storage and retrieval"""
+    
+    def __init__(self):
+        self.history_dir = HISTORY_DIR
+        self.current_session = []
+        self.load_previous_sessions()
+    
+    def load_previous_sessions(self):
+        """Load chat history from previous sessions"""
+        try:
+            all_sessions = []
+            if self.history_dir.exists():
+                for session_file in sorted(self.history_dir.glob("session_*.json")):
+                    try:
+                        with open(session_file, 'r', encoding='utf-8') as f:
+                            session_data = json.load(f)
+                            all_sessions.append({
+                                'file': session_file.name,
+                                'messages': session_data
+                            })
+                    except:
+                        pass
+            return all_sessions
+        except:
+            return []
+    
+    def add_to_history(self, sender: str, message: str):
+        """Add message to current session history"""
+        timestamp = datetime.datetime.now().strftime('%H:%M:%S')
+        self.current_session.append({
+            'timestamp': timestamp,
+            'sender': sender,
+            'message': message
+        })
+        self.save_current_session()
+    
+    def save_current_session(self):
+        """Save current session to file"""
+        try:
+            with open(CURRENT_SESSION_FILE, 'w', encoding='utf-8') as f:
+                json.dump(self.current_session, f, indent=2, ensure_ascii=False)
+        except:
+            pass
+    
+    def get_session_summary(self) -> str:
+        """Get summary of previous sessions"""
+        sessions = self.load_previous_sessions()
+        if not sessions:
+            return "No previous sessions found."
+        
+        summary = f"Found {len(sessions)} previous sessions:\n"
+        for i, session in enumerate(sessions[-5:], 1):  # Show last 5 sessions
+            msg_count = len(session['messages'])
+            summary += f"{i}. {session['file']}: {msg_count} messages\n"
+        return summary
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -78,13 +148,25 @@ class AdvancedCommandExecutor:
         """Take a screenshot"""
         try:
             import pyautogui
+            import time as time_module
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"screenshot_{timestamp}.png"
-            path = Path.home() / "Desktop" / filename
+            desktop_path = Path.home() / "Desktop"
+            desktop_path.mkdir(exist_ok=True)
+            path = desktop_path / filename
+            
+            # Add small delay to ensure window is ready
+            time_module.sleep(0.5)
             pyautogui.screenshot(str(path))
-            return f"Screenshot saved as {filename}"
-        except:
-            return "Could not take screenshot"
+            
+            if path.exists():
+                return f"Screenshot saved to Desktop as {filename}"
+            else:
+                return "Screenshot capture failed - file not created"
+        except ImportError:
+            return "Could not take screenshot. Install pyautogui: pip install pyautogui"
+        except Exception as e:
+            return f"Screenshot error: {str(e)}"
     
     def set_brightness(self, level: int):
         """Set screen brightness (0-100)"""
@@ -116,8 +198,8 @@ class AdvancedCommandExecutor:
         except Exception as e:
             return f"Error opening file: {str(e)}"
     
-    def open_telegram(self, person_name: str = None):
-        """Open Telegram and optionally open a chat"""
+    def open_telegram(self, person_name: str = None, use_installed: bool = False):
+        """Open Telegram - installed app or web version"""
         try:
             # Try to find Telegram executable
             telegram_paths = [
@@ -126,33 +208,111 @@ class AdvancedCommandExecutor:
                 r"C:\Program Files (x86)\Telegram Desktop\Telegram.exe"
             ]
             
-            for path in telegram_paths:
-                if os.path.exists(path):
-                    subprocess.Popen([path])
-                    
-                    if person_name:
-                        # Wait a bit for Telegram to open
-                        time.sleep(2)
-                        # Try to open chat using telegram:// protocol
-                        webbrowser.open(f"tg://resolve?domain={person_name}")
-                        return f"Opening Telegram chat with {person_name}"
-                    return "Opening Telegram"
+            # If user explicitly wants installed version
+            if use_installed:
+                for path in telegram_paths:
+                    if os.path.exists(path):
+                        subprocess.Popen([path])
+                        
+                        if person_name:
+                            time.sleep(2)
+                            webbrowser.open(f"tg://resolve?domain={person_name}")
+                            return f"Opening Telegram (Installed) chat with {person_name}"
+                        return "Opening Telegram (Installed)"
+                # If installed not found, fall back to web
+                return self.open_telegram_web(person_name)
             
-            # If not found, try web version
-            webbrowser.open("https://web.telegram.org")
-            return "Opening Telegram Web"
+            # Default: Try web version first
+            return self.open_telegram_web(person_name)
+            
         except Exception as e:
             return f"Error opening Telegram: {str(e)}"
     
-    def open_whatsapp(self, person_name: str = None):
-        """Open WhatsApp"""
+    def open_telegram_web(self, person_name: str = None):
+        """Open Telegram Web version"""
+        try:
+            webbrowser.open("https://web.telegram.org")
+            if person_name:
+                return f"Opening Telegram Web. Please search for {person_name}"
+            return "Opening Telegram Web"
+        except:
+            return "Could not open Telegram Web"
+    
+    def open_whatsapp(self, person_name: str = None, use_installed: bool = False):
+        """Open WhatsApp - installed app or web version"""
+        try:
+            # WhatsApp Desktop paths
+            whatsapp_paths = [
+                os.path.expandvars(r"%APPDATA%\WhatsApp\WhatsApp.exe"),
+                r"C:\Program Files\WhatsApp\WhatsApp.exe",
+                r"C:\Program Files (x86)\WhatsApp\WhatsApp.exe"
+            ]
+            
+            # If user explicitly wants installed version
+            if use_installed:
+                for path in whatsapp_paths:
+                    if os.path.exists(path):
+                        subprocess.Popen([path])
+                        if person_name:
+                            return f"Opening WhatsApp (Installed). Please search for {person_name}"
+                        return "Opening WhatsApp (Installed)"
+                # If installed not found, fall back to web
+                return self.open_whatsapp_web(person_name)
+            
+            # Default: Try web version first
+            return self.open_whatsapp_web(person_name)
+        except Exception as e:
+            return f"Error opening WhatsApp: {str(e)}"
+    
+    def open_whatsapp_web(self, person_name: str = None):
+        """Open WhatsApp Web version"""
         try:
             webbrowser.open("https://web.whatsapp.com")
             if person_name:
-                return f"Opening WhatsApp. Please search for {person_name}"
+                return f"Opening WhatsApp Web. Please search for {person_name}"
             return "Opening WhatsApp Web"
         except:
-            return "Could not open WhatsApp"
+            return "Could not open WhatsApp Web"
+    
+    def open_spotify(self, song_name: str = None):
+        """Open Spotify and optionally play a song"""
+        try:
+            # Spotify Desktop paths
+            spotify_paths = [
+                os.path.expandvars(r"%APPDATA%\Spotify\Spotify.exe"),
+                r"C:\Users" + os.path.expanduser("~").split("Users")[1].split("\\")[0] + r"\AppData\Roaming\Spotify\Spotify.exe",
+                r"C:\Program Files\Spotify\Spotify.exe",
+                r"C:\Program Files (x86)\Spotify\Spotify.exe"
+            ]
+            
+            # Try to find and open installed Spotify
+            spotify_found = False
+            for path in spotify_paths:
+                if os.path.exists(path):
+                    subprocess.Popen([path])
+                    spotify_found = True
+                    break
+            
+            if song_name:
+                # Wait for Spotify to start
+                time.sleep(2)
+                # Use Spotify protocol to search and play song
+                # Remove special characters and convert spaces to %20
+                song_query = song_name.strip().replace(" ", "%20")
+                webbrowser.open(f"spotify:search:{song_query}")
+                return f"Opening Spotify - Playing: {song_name}"
+            
+            if spotify_found:
+                return "Opening Spotify Desktop"
+            else:
+                # Fallback to web version
+                webbrowser.open("https://open.spotify.com")
+                if song_name:
+                    return f"Opening Spotify Web. Please search and play: {song_name}"
+                return "Opening Spotify Web"
+                
+        except Exception as e:
+            return f"Error opening Spotify: {str(e)}"
 
 # ==================== MAIN COMMAND EXECUTOR ====================
 class CommandExecutor:
@@ -227,16 +387,29 @@ class CommandExecutor:
         
         # ========== TELEGRAM ==========
         elif "telegram" in cmd or "open telegram" in cmd:
+            use_installed = "installed" in cmd
             if "chat" in cmd or "message" in cmd:
                 # Extract person name
-                person = cmd.replace("telegram", "").replace("open", "").replace("chat", "").replace("message", "").strip()
-                return self.advanced.open_telegram(person if person else None)
-            return self.advanced.open_telegram()
+                person = cmd.replace("telegram", "").replace("open", "").replace("chat", "").replace("message", "").replace("installed", "").strip()
+                return self.advanced.open_telegram(person if person else None, use_installed=use_installed)
+            return self.advanced.open_telegram(use_installed=use_installed)
         
         # ========== WHATSAPP ==========
         elif "whatsapp" in cmd or "open whatsapp" in cmd:
-            person = cmd.replace("whatsapp", "").replace("open", "").replace("chat", "").replace("message", "").strip()
-            return self.advanced.open_whatsapp(person if person else None)
+            use_installed = "installed" in cmd
+            person = cmd.replace("whatsapp", "").replace("open", "").replace("chat", "").replace("message", "").replace("installed", "").strip()
+            return self.advanced.open_whatsapp(person if person else None, use_installed=use_installed)
+        
+        # ========== SPOTIFY ==========
+        elif "spotify" in cmd or "open spotify" in cmd or "play" in cmd and "spotify" in cmd:
+            if "play" in cmd:
+                # Extract song name - remove keywords to get song
+                song = cmd.replace("spotify", "").replace("open", "").replace("play", "").replace("and", "").strip()
+                if song:
+                    return self.advanced.open_spotify(song)
+                else:
+                    return self.advanced.open_spotify()
+            return self.advanced.open_spotify()
         
         # ========== FOLDER COMMANDS ==========
         elif "open folder" in cmd:
@@ -349,11 +522,21 @@ class CommandExecutor:
 
 # ==================== MSI UI APPLICATION ====================
 class MSIApp(ctk.CTk):
-    def __init__(self):
+    def __init__(self, username=None):
         super().__init__()
 
         self.title("M.S.I. Control System")
         self.geometry("1000x750")
+        self.logged_in_user = username if username else os.getlogin()
+        
+        # Update window title with username
+        self.title(f"M.S.I. Control System - Welcome {self.logged_in_user}")
+        
+        # Show login first
+        self.withdraw()  # Hide main window initially
+        login_app = LoginApp(callback=self.on_login_success)
+        self.wait_window(login_app)
+        self.deiconify()  # Show main window after login
         
         # Core Systems
         self.engine = pyttsx3.init()
@@ -365,17 +548,25 @@ class MSIApp(ctk.CTk):
         self.recognizer.pause_threshold = 0.8
         self.is_listening = False
         self.command_executor = CommandExecutor()
+        self.chat_history = ChatHistoryManager()
+        self.db = DatabaseManager()
         
         self.setup_ui()
 
         # Start diagnostics
         threading.Thread(target=self.run_startup_diagnostics, daemon=True).start()
+    
+    def on_login_success(self, username):
+        """Callback when user logs in successfully"""
+        self.current_user = username
+        self.title(f"M.S.I. Control System - User: {username}")
 
     def setup_ui(self):
         self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(2, weight=0)  # Chat history sidebar
         self.grid_rowconfigure(1, weight=1)
 
-        # 1. SIDEBAR
+        # 1. LEFT SIDEBAR (System Widgets)
         self.sidebar = ctk.CTkFrame(self, width=280, corner_radius=0, fg_color="#1a1a1a")
         self.sidebar.grid(row=0, column=0, rowspan=4, sticky="nsew", padx=0)
         
@@ -461,10 +652,48 @@ class MSIApp(ctk.CTk):
                                          command=self.clear_console, width=150, height=40,
                                          font=("Orbitron", 14, "bold"), fg_color="#a11d1d")
         self.clear_button.pack(side="left", padx=10)
+        
+        self.history_toggle_button = ctk.CTkButton(self.button_frame, text="📜 TOGGLE HISTORY", 
+                                           command=self.toggle_history_sidebar, width=180, height=40,
+                                           font=("Orbitron", 14, "bold"), fg_color="#1f538d")
+        self.history_toggle_button.pack(side="left", padx=10)
+        
+        # 4. RIGHT SIDEBAR - CHAT HISTORY
+        self.history_sidebar_visible = True
+        self.history_sidebar = ctk.CTkFrame(self, width=300, corner_radius=0, fg_color="#1a1a1a")
+        self.history_sidebar.grid(row=0, column=2, rowspan=4, sticky="nsew", padx=0)
+        
+        # Chat History Title
+        self.history_title = ctk.CTkLabel(self.history_sidebar, text="💬 CHAT HISTORY", 
+                                         font=("Orbitron", 18, "bold"), text_color="#00d4ff")
+        self.history_title.pack(pady=15)
+        
+        # Scrollable frame for chat list
+        self.chat_list_frame = ctk.CTkScrollableFrame(self.history_sidebar, 
+                                                      fg_color="#0a0a0a",
+                                                      height=600)
+        self.chat_list_frame.pack(pady=10, padx=10, fill="both", expand=True)
+        
+        # Load chat sessions
+        self.load_chat_sessions()
 
     def run_startup_diagnostics(self):
         """Perform hardware and mic check before starting"""
         self.log("DIAGNOSTICS: Starting Microphone Test...")
+        self.log("=" * 50)
+        
+        # Show previous chat history summary
+        self.log("📜 CHAT HISTORY:")
+        sessions = self.chat_history.load_previous_sessions()
+        if sessions:
+            self.log(f"   Found {len(sessions)} previous chat sessions")
+            self.log("   View them in the sidebar →")
+        else:
+            self.log("   No previous sessions found.")
+            self.log("   Your conversations will be saved automatically!")
+        
+        self.log("=" * 50)
+        
         try:
             with sr.Microphone() as source:
                 self.log("DIAGNOSTICS: Adjusting for ambient noise (Stay quiet for 2 seconds)...")
@@ -494,7 +723,9 @@ class MSIApp(ctk.CTk):
             self.cmd_entry.configure(placeholder_text="System ready. Type or speak command...")
             
             self.update_widgets()
-            self.speak("System diagnostics complete. All hardware operational. M S I initialized.")
+            welcome_msg = f"Welcome {self.logged_in_user}! System diagnostics complete. All hardware operational. M S I initialized."
+            self.speak(welcome_msg)
+            self.log(f"MSI: Welcome {self.logged_in_user}!")
             self.log("MSI: Ready for commands. Click ACTIVATE VOICE and speak!")
             self.log(f"MSI: Energy threshold: {round(self.recognizer.energy_threshold, 2)}")
             
@@ -561,12 +792,21 @@ class MSIApp(ctk.CTk):
         self.execute_command(cmd)
 
     def log(self, message):
-        """Add message to console"""
+        """Add message to console and save to history"""
         self.console.configure(state="normal")
         timestamp = datetime.datetime.now().strftime('%H:%M:%S')
         self.console.insert("end", f"[{timestamp}] {message}\n")
         self.console.see("end")
         self.console.configure(state="disabled")
+        
+        # Save to chat history
+        sender = "SYSTEM"
+        if "YOU:" in message:
+            sender = "USER"
+        elif "MSI:" in message:
+            sender = "MSI"
+        
+        self.chat_history.add_to_history(sender, message)
 
     def speak(self, text):
         """Text to speech"""
@@ -632,6 +872,87 @@ class MSIApp(ctk.CTk):
             self.log(f"YOU: {cmd}")
             self.cmd_entry.delete(0, 'end')
             self.execute_command(cmd)
+    
+    def load_chat_sessions(self):
+        """Load and display chat sessions in sidebar"""
+        # Clear existing items
+        for widget in self.chat_list_frame.winfo_children():
+            widget.destroy()
+        
+        # Load sessions
+        sessions = self.chat_history.load_previous_sessions()
+        
+        if not sessions:
+            no_history_label = ctk.CTkLabel(self.chat_list_frame, 
+                                           text="No previous chats\n\nStart chatting to\nsave history!", 
+                                           font=("Consolas", 12),
+                                           text_color="#888888",
+                                           justify="center")
+            no_history_label.pack(pady=50)
+        else:
+            # Display sessions (most recent first)
+            for idx, session in enumerate(reversed(sessions), 1):
+                session_file = session['file']
+                messages = session['messages']
+                
+                # Create chat name
+                chat_name = f"Chat {idx}"
+                
+                # Get first user message as preview
+                preview = "No messages"
+                for msg in messages:
+                    if 'YOU:' in msg.get('message', '') or msg.get('sender') == 'USER':
+                        preview = msg.get('message', '')[:50]
+                        if len(msg.get('message', '')) > 50:
+                            preview += "..."
+                        break
+                
+                # Create button for this chat
+                chat_btn = ctk.CTkButton(
+                    self.chat_list_frame,
+                    text=f"📝 {chat_name}\n{preview}",
+                    width=260,
+                    height=60,
+                    fg_color="#2b2b2b",
+                    hover_color="#3b3b3b",
+                    font=("Consolas", 11),
+                    anchor="w",
+                    command=lambda s=session: self.load_chat_into_console(s)
+                )
+                chat_btn.pack(pady=5, padx=5, fill="x")
+    
+    def load_chat_into_console(self, session):
+        """Load selected chat into main console"""
+        self.console.configure(state="normal")
+        self.console.delete("1.0", "end")
+        
+        # Add session header
+        session_name = session['file'].replace('session_', '').replace('.json', '')
+        self.console.insert("end", f"📅 LOADED SESSION: {session_name}\n")
+        self.console.insert("end", "=" * 60 + "\n\n")
+        
+        # Add all messages
+        for msg in session['messages']:
+            timestamp = msg.get('timestamp', 'N/A')
+            message = msg.get('message', '')
+            self.console.insert("end", f"[{timestamp}] {message}\n")
+        
+        self.console.insert("end", "\n" + "=" * 60 + "\n")
+        self.console.insert("end", "End of session. Continue chatting below.\n")
+        self.console.see("end")
+        self.console.configure(state="disabled")
+    
+    def toggle_history_sidebar(self):
+        """Toggle chat history sidebar visibility"""
+        if self.history_sidebar_visible:
+            self.history_sidebar.grid_forget()
+            self.history_sidebar_visible = False
+            self.history_toggle_button.configure(text="📜 SHOW HISTORY")
+        else:
+            self.history_sidebar.grid(row=0, column=2, rowspan=4, sticky="nsew", padx=0)
+            self.history_sidebar_visible = True
+            self.history_toggle_button.configure(text="📜 HIDE HISTORY")
+            self.load_chat_sessions()  # Refresh the list
     
     def clear_console(self):
         """Clear the console"""

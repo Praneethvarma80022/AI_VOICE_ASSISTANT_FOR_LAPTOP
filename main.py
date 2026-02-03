@@ -10,6 +10,7 @@ import ctypes
 from pathlib import Path
 import shutil
 import psutil
+import json
 
 print("🤖 Initializing MSI...")
 
@@ -177,13 +178,25 @@ class AdvancedCommandExecutor:
         """Take a screenshot"""
         try:
             import pyautogui
+            import time as time_module
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"screenshot_{timestamp}.png"
-            path = Path.home() / "Desktop" / filename
+            desktop_path = Path.home() / "Desktop"
+            desktop_path.mkdir(exist_ok=True)
+            path = desktop_path / filename
+            
+            # Add small delay to ensure window is ready
+            time_module.sleep(0.5)
             pyautogui.screenshot(str(path))
-            return f"Screenshot saved to Desktop as {filename}"
-        except:
+            
+            if path.exists():
+                return f"Screenshot saved to Desktop as {filename}"
+            else:
+                return "Screenshot capture failed - file not created"
+        except ImportError:
             return "Could not take screenshot. Install pyautogui: pip install pyautogui"
+        except Exception as e:
+            return f"Screenshot error: {str(e)}"
     
     def list_running_apps(self):
         """List running applications"""
@@ -258,8 +271,8 @@ class AdvancedCommandExecutor:
         except Exception as e:
             return f"Error opening file: {str(e)}"
     
-    def open_telegram(self, person_name: str = None):
-        """Open Telegram and optionally open a chat"""
+    def open_telegram(self, person_name: str = None, use_installed: bool = False):
+        """Open Telegram - installed app or web version"""
         try:
             # Try to find Telegram executable
             telegram_paths = [
@@ -268,36 +281,111 @@ class AdvancedCommandExecutor:
                 r"C:\Program Files (x86)\Telegram Desktop\Telegram.exe"
             ]
             
-            telegram_opened = False
-            for path in telegram_paths:
-                if os.path.exists(path):
-                    subprocess.Popen([path])
-                    telegram_opened = True
-                    
-                    if person_name:
-                        # Wait a bit for Telegram to open
-                        time.sleep(2)
-                        # Try to open chat using telegram:// protocol
-                        webbrowser.open(f"tg://resolve?domain={person_name}")
-                        return f"Opening Telegram chat with {person_name}"
-                    return "Opening Telegram"
+            # If user explicitly wants installed version
+            if use_installed:
+                for path in telegram_paths:
+                    if os.path.exists(path):
+                        subprocess.Popen([path])
+                        
+                        if person_name:
+                            time.sleep(2)
+                            webbrowser.open(f"tg://resolve?domain={person_name}")
+                            return f"Opening Telegram (Installed) chat with {person_name}"
+                        return "Opening Telegram (Installed)"
+                # If installed not found, fall back to web
+                return self.open_telegram_web(person_name)
             
-            # If not found, try web version
-            if not telegram_opened:
-                webbrowser.open("https://web.telegram.org")
-                return "Opening Telegram Web"
+            # Default: Try web version first
+            return self.open_telegram_web(person_name)
+            
         except Exception as e:
             return f"Error opening Telegram: {str(e)}"
     
-    def open_whatsapp(self, person_name: str = None):
-        """Open WhatsApp"""
+    def open_telegram_web(self, person_name: str = None):
+        """Open Telegram Web version"""
+        try:
+            webbrowser.open("https://web.telegram.org")
+            if person_name:
+                return f"Opening Telegram Web. Please search for {person_name}"
+            return "Opening Telegram Web"
+        except:
+            return "Could not open Telegram Web"
+    
+    def open_whatsapp(self, person_name: str = None, use_installed: bool = False):
+        """Open WhatsApp - installed app or web version"""
+        try:
+            # WhatsApp Desktop paths
+            whatsapp_paths = [
+                os.path.expandvars(r"%APPDATA%\WhatsApp\WhatsApp.exe"),
+                r"C:\Program Files\WhatsApp\WhatsApp.exe",
+                r"C:\Program Files (x86)\WhatsApp\WhatsApp.exe"
+            ]
+            
+            # If user explicitly wants installed version
+            if use_installed:
+                for path in whatsapp_paths:
+                    if os.path.exists(path):
+                        subprocess.Popen([path])
+                        if person_name:
+                            return f"Opening WhatsApp (Installed). Please search for {person_name}"
+                        return "Opening WhatsApp (Installed)"
+                # If installed not found, fall back to web
+                return self.open_whatsapp_web(person_name)
+            
+            # Default: Try web version first
+            return self.open_whatsapp_web(person_name)
+        except Exception as e:
+            return f"Error opening WhatsApp: {str(e)}"
+    
+    def open_whatsapp_web(self, person_name: str = None):
+        """Open WhatsApp Web version"""
         try:
             webbrowser.open("https://web.whatsapp.com")
             if person_name:
-                return f"Opening WhatsApp. Please search for {person_name}"
+                return f"Opening WhatsApp Web. Please search for {person_name}"
             return "Opening WhatsApp Web"
         except:
-            return "Could not open WhatsApp"
+            return "Could not open WhatsApp Web"
+    
+    def open_spotify(self, song_name: str = None):
+        """Open Spotify and optionally play a song"""
+        try:
+            # Spotify Desktop paths
+            spotify_paths = [
+                os.path.expandvars(r"%APPDATA%\Spotify\Spotify.exe"),
+                r"C:\Users" + os.path.expanduser("~").split("Users")[1].split("\\")[0] + r"\AppData\Roaming\Spotify\Spotify.exe",
+                r"C:\Program Files\Spotify\Spotify.exe",
+                r"C:\Program Files (x86)\Spotify\Spotify.exe"
+            ]
+            
+            # Try to find and open installed Spotify
+            spotify_found = False
+            for path in spotify_paths:
+                if os.path.exists(path):
+                    subprocess.Popen([path])
+                    spotify_found = True
+                    break
+            
+            if song_name:
+                # Wait for Spotify to start
+                time.sleep(2)
+                # Use Spotify protocol to search and play song
+                # Remove special characters and convert spaces to %20
+                song_query = song_name.strip().replace(" ", "%20")
+                webbrowser.open(f"spotify:search:{song_query}")
+                return f"Opening Spotify - Playing: {song_name}"
+            
+            if spotify_found:
+                return "Opening Spotify Desktop"
+            else:
+                # Fallback to web version
+                webbrowser.open("https://open.spotify.com")
+                if song_name:
+                    return f"Opening Spotify Web. Please search and play: {song_name}"
+                return "Opening Spotify Web"
+                
+        except Exception as e:
+            return f"Error opening Spotify: {str(e)}"
 
 # ==================== ENHANCED COMMAND EXECUTOR ====================
 class CommandExecutor:
@@ -400,18 +488,35 @@ class CommandExecutor:
         
         # ========== TELEGRAM ==========
         elif "telegram" in cmd or "open telegram" in cmd:
+            use_installed = "installed" in cmd
             if "chat" in cmd or "message" in cmd or "person" in cmd:
                 # Extract person name after removing keywords
-                person = cmd.replace("telegram", "").replace("open", "").replace("chat", "").replace("message", "").replace("person", "").replace("with", "").strip()
-                return self.advanced.open_telegram(person if person else None)
-            return self.advanced.open_telegram()
+                person = cmd.replace("telegram", "").replace("open", "").replace("chat", "").replace("message", "").replace("person", "").replace("with", "").replace("installed", "").strip()
+                return self.advanced.open_telegram(person if person else None, use_installed=use_installed)
+            return self.advanced.open_telegram(use_installed=use_installed)
         
         # ========== WHATSAPP ==========
         elif "whatsapp" in cmd or "open whatsapp" in cmd:
+            use_installed = "installed" in cmd
             if "chat" in cmd or "message" in cmd or "person" in cmd:
-                person = cmd.replace("whatsapp", "").replace("open", "").replace("chat", "").replace("message", "").replace("person", "").replace("with", "").strip()
-                return self.advanced.open_whatsapp(person if person else None)
-            return self.advanced.open_whatsapp()
+                person = cmd.replace("whatsapp", "").replace("open", "").replace("chat", "").replace("message", "").replace("person", "").replace("with", "").replace("installed", "").strip()
+                return self.advanced.open_whatsapp(person if person else None, use_installed=use_installed)
+            return self.advanced.open_whatsapp(use_installed=use_installed)
+        
+        # ========== SPOTIFY ==========
+        elif "spotify" in cmd or "open spotify" in cmd or "play" in cmd and "spotify" in cmd:
+            if "play" in cmd:
+                # Extract song name - remove keywords to get song
+                song = cmd.replace("spotify", "").replace("open", "").replace("play", "").replace("and", "").strip()
+                if song:
+                    return self.advanced.open_spotify(song)
+                else:
+                    return self.advanced.open_spotify()
+            return self.advanced.open_spotify()
+        
+        # ========== CREATE FILE ==========
+        elif "create file" in cmd:
+            filename = cmd.replace("create file", "").strip()
             if not filename:
                 filename = f"newfile_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
             return self.advanced.create_file(filename)
